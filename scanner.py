@@ -1,82 +1,59 @@
-import os
-import json
 import requests
-import re
 from bs4 import BeautifulSoup
+import json
+import re
+import time
 
+# Usamos un User-Agent de un navegador real y moderno
 headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
     "Referer": "https://blackoutcomics.com/"
 }
 
-POSTERS_DIR = "capas"
-if not os.path.exists(POSTERS_DIR):
-    os.makedirs(POSTERS_DIR)
+with open("links.txt", "r", encoding="utf-8") as f:
+    links = [l.strip() for l in f if l.strip()]
 
-try:
-    with open("links.txt", "r", encoding="utf-8") as f:
-        links = []
-        for line in f:
-            line = line.strip()
-            match = re.search(r'(https?://[^\s]+)', line)
-            if match:
-                links.append(match.group(1))
-except FileNotFoundError:
-    print("Arquivo links.txt não encontrado. Crie um com os links desejados.")
-    links = []
-
-resultado_final = []
+resultado = []
 
 for link in links:
     try:
-        print("Escaneando:", link)
-        response = requests.get(link, headers=headers, timeout=15)
+        print(f"Escaneando: {link}")
+        # Agregamos una pequeña pausa para no ser bloqueados por el servidor
+        time.sleep(1) 
+        response = requests.get(link, headers=headers, timeout=25)
         soup = BeautifulSoup(response.text, "html.parser")
 
-        titulo = soup.title.text.strip() if soup.title else "Manhwa Sem Nome"
-        titulo = re.sub(r'\s*[\-\|]\s*Black[oO]ut\s*Comics.*', '', titulo).strip()
+        # Intentar obtener el título
+        titulo_tag = soup.find("h1") or soup.find("title")
+        titulo = titulo_tag.text.strip() if titulo_tag else "Desconocido"
+        titulo = titulo.replace(" | Blackout Comics", "").strip()
 
-        imagem = ""
-        og_image = soup.find("meta", property="og:image")
+        # Buscar capítulos en toda la página usando un regex más amplio
+        # Buscamos patrones como: "Cap 50", "Capítulo 50", "Ch. 50", o números solos si están cerca de 'chapter'
+        texto_completo = soup.get_text()
+        # Buscamos números precedidos por palabras clave
+        patron = re.compile(r'(?:cap[itulo]*|ch[apter]*)\.?\s*(\d+)', re.IGNORECASE)
+        match_caps = patron.findall(texto_completo)
         
-        if og_image:
-            imagem = og_image.get("content", "")
-
-        textos = soup.get_text()
-        caps = re.findall(r'(?:Chapter|Capítulo|Cap)\s*(\d+)', textos, re.IGNORECASE)
-        capitulo = str(max([int(c) for c in caps])) if caps else "?"
+        # Convertir a enteros y encontrar el máximo
+        numeros = [int(n) for n in match_caps if int(n) < 5000]
         
-        # Fazendo o download da imagem para evitar Hotlinking
-        nome_arquivo_local = ""
-        if imagem:
-            ext = "jpg"
-            if ".png" in imagem.lower(): ext = "png"
-            elif ".webp" in imagem.lower(): ext = "webp"
-            
-            nome_arquivo_local = f"{re.sub(r'[^a-zA-Z0-9]', '_', titulo)}.{ext}"
-            caminho_salvar = os.path.join(POSTERS_DIR, nome_arquivo_local)
-            
-            if not os.path.exists(caminho_salvar):
-                try:
-                    img_resp = requests.get(imagem, headers=headers, timeout=15)
-                    if img_resp.status_code == 200:
-                        with open(caminho_salvar, "wb") as img_file:
-                            img_file.write(img_resp.content)
-                except:
-                    nome_arquivo_local = ""
+        capitulo = str(max(numeros)) if numeros else "?"
 
-        resultado_final.append({
-            "titulo": titulo,
-            "url": link,
+        resultado.append({
+            "nome": titulo,
+            "link": link,
             "capitulo": capitulo,
-            "capa": f"capas/{nome_arquivo_local}" if nome_arquivo_local else imagem,
+            "imagem": "", # La imagen se maneja mejor en el JSON
             "status": "ongoing"
         })
+        print(f" -> Encontrado: {capitulo}")
 
     except Exception as e:
-        print(f"ERRO ao processar {link}: {e}")
+        print(f"ERROR en {link}: {e}")
 
-if resultado_final:
-    with open("manhwas.json", "w", encoding="utf-8") as f:
-        json.dump(resultado_final, f, ensure_ascii=False, indent=4)
-    print("\nFINALIZADO. JSON gerado e imagens baixadas na pasta 'capas'.")
+with open("manhwas.json", "w", encoding="utf-8") as f:
+    json.dump(resultado, f, ensure_ascii=False, indent=4)
+
+print("\nScan finalizado.")
