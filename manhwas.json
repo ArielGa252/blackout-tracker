@@ -1,0 +1,4 @@
+const manhwas = [
+  {"title": "Manhwa 1", "link": "https://example.com"},
+  {"title": "Manhwa 2", "link": "https://example.com"}
+];
