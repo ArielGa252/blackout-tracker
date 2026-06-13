@@ -1,30 +1,96 @@
-const DATA_URLS=['data/manhwas.json','manhwas.json'];
-const CHAPTERS_URLS=['data/mangas_resultado.json','mangas_resultado.json'];
-const STORAGE_KEY='portal_manhwas_progress_v2';
-const THEME_KEY='portal_manhwas_theme';
-let manhwas=[],chaptersMap=new Map(),state=loadState(),query='',filter='todos',sort='az';
-const $=s=>document.querySelector(s);
-const clean=t=>String(t||'').replace(/\|\s*Blackout Comics/ig,'').trim();
-const slug=t=>clean(t).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'');
-const keyOf=m=>String(m.id??m.url??slug(m.title||m.titulo||m.nome));
-function loadState(){try{return JSON.parse(localStorage.getItem(STORAGE_KEY))||{}}catch{return {}}}
-function saveState(){localStorage.setItem(STORAGE_KEY,JSON.stringify(state))}
-function getProgress(id){state[id] ||= {read:[],current:0,favorite:false,finished:false};return state[id]}
-async function readJson(urls,fallback){for(const url of urls){try{const r=await fetch(url,{cache:'no-store'});if(r.ok)return await r.json()}catch{}}return fallback}
-function normalizeManga(item,i){const title=clean(item.titulo||item.nome||item.title||`Manhwa ${i+1}`);const id=String(item.id??'').trim()||(String(item.url||item.link||'').match(/\/comics\/(\d+)/)?.[1]);return{id:id||String(i),title,url:item.url||item.link||'',cover:item.capa||item.imagem||item.cover||'',status:item.status||'unknown'}}
-function normalizeChapters(raw){const map=new Map();(raw||[]).forEach(item=>{const url=item.url||item.link||'';const id=String(item.id??(url.match(/\/comics\/(\d+)/)?.[1]||''));const title=clean(item.nome||item.titulo||item.title||'');const caps=(Array.isArray(item.capitulos)?item.capitulos:[]).map(c=>Number(String(c).match(/\d+/)?.[0]||c)).filter(Boolean);if(id)map.set(id,caps);if(title)map.set(slug(title),caps)});return map}
-function chapterCount(m){return (chaptersMap.get(m.id)||chaptersMap.get(slug(m.title))||[]).length}
-function progressPercent(m){const p=getProgress(keyOf(m));const total=Math.max(chapterCount(m),Number(p.current||0),1);return Math.round((p.read.length/total)*100)}
-async function init(){applyTheme();tickClock();setInterval(tickClock,1000);bindEvents();const [mRaw,cRaw]=await Promise.all([readJson(DATA_URLS,[]),readJson(CHAPTERS_URLS,[])]);manhwas=(mRaw||[]).map(normalizeManga);chaptersMap=normalizeChapters(cRaw);$('#loading').classList.add('hidden');render()}
-function cardTemplate(m){const id=keyOf(m),p=getProgress(id),total=chapterCount(m),percent=progressPercent(m);const safe=m.title.replace(/'/g,'');const cover=m.cover?`<img src="${m.cover}" alt="${m.title}" loading="lazy" onerror="this.replaceWith(placeholderCover('${safe}'))">`:`<div class="cover-placeholder">${m.title[0]||'M'}</div>`;return `<article class="manga-card card"><div class="cover-wrap">${cover}<span class="badge">${total||'?'} caps</span><button class="fav-btn ${p.favorite?'active':''}" data-fav="${id}">★</button></div><div class="manga-info"><h3>${m.title}</h3><div class="manga-meta"><span>Atual: ${p.current||0}</span><span>${percent}%</span></div><div class="progress"><i style="width:${percent}%"></i></div><div class="manga-meta"><span>${p.finished?'Finalizado':p.read.length?'Lendo':'Não iniciado'}</span><span>${p.read.length} lidos</span></div><div class="card-actions"><a class="small-btn" href="manhwa.html?id=${encodeURIComponent(m.id)}&title=${encodeURIComponent(m.title)}">Abrir</a><button class="small-btn" data-finish="${id}">${p.finished?'Reabrir':'Finalizar'}</button></div></div></article>`}
-function render(){let list=manhwas.filter(m=>m.title.toLowerCase().includes(query));list=list.filter(m=>{const p=getProgress(keyOf(m));if(filter==='lendo')return p.read.length&&!p.finished;if(filter==='favoritos')return p.favorite;if(filter==='finalizados')return p.finished;if(filter==='nao-lidos')return !p.read.length;return true});list.sort((a,b)=>sort==='za'?b.title.localeCompare(a.title):sort==='progresso'?progressPercent(b)-progressPercent(a):a.title.localeCompare(b.title));$('#libraryGrid').innerHTML=list.map(cardTemplate).join('');$('#emptyState').classList.toggle('hidden',list.length>0);updateStats();bindCardButtons()}
-window.placeholderCover=title=>{const div=document.createElement('div');div.className='cover-placeholder';div.textContent=title?.[0]||'M';return div}
-function bindCardButtons(){document.querySelectorAll('[data-fav]').forEach(btn=>btn.onclick=e=>{const p=getProgress(e.currentTarget.dataset.fav);p.favorite=!p.favorite;saveState();render()});document.querySelectorAll('[data-finish]').forEach(btn=>btn.onclick=e=>{const p=getProgress(e.currentTarget.dataset.finish);p.finished=!p.finished;saveState();render()})}
-function updateStats(){$('#statTotal').textContent=manhwas.length;$('#statReading').textContent=Object.values(state).filter(p=>p.read?.length&&!p.finished).length;$('#statFinished').textContent=Object.values(state).filter(p=>p.finished).length;$('#statFav').textContent=Object.values(state).filter(p=>p.favorite).length}
-function bindEvents(){$('#searchInput').oninput=e=>{query=e.target.value.toLowerCase().trim();render()};$('#statusFilter').onchange=e=>{filter=e.target.value;render()};$('#sortSelect').onchange=e=>{sort=e.target.value;render()};$('#themeBtn').onclick=toggleTheme;$('#backupBtn').onclick=()=>downloadJson(state,'progresso-portal-manhwas.json');$('#restoreInput').onchange=restoreProgress}
-function downloadJson(data,name){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));a.download=name;a.click();URL.revokeObjectURL(a.href)}
-function restoreProgress(e){const file=e.target.files[0];if(!file)return;const reader=new FileReader();reader.onload=()=>{try{state=JSON.parse(reader.result);saveState();render();alert('Progresso importado!')}catch{alert('Arquivo inválido')}};reader.readAsText(file)}
-function applyTheme(){if(localStorage.getItem(THEME_KEY)==='light')document.documentElement.classList.add('light')}
-function toggleTheme(){document.documentElement.classList.toggle('light');localStorage.setItem(THEME_KEY,document.documentElement.classList.contains('light')?'light':'dark')}
-function tickClock(){const el=$('#clock');if(el)el.textContent=new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}
-init();
+async function loadManhwas(){
+    const response = await fetch("manhwas.json");
+    const manhwas = await response.json();
+    const grid = document.getElementById("grid");
+    const search = document.getElementById("search");
+
+    function limparTitulo(titulo) {
+        if (!titulo) return "Sem Nome";
+        return titulo.replace(/\s*[\-\|]\s*Black[oO]ut\s*Comics.*/i, "").trim();
+    }
+
+    function getData(nome){
+        const nomeLimpo = limparTitulo(nome);
+        return JSON.parse(localStorage.getItem(nomeLimpo)) || {
+            readed: false,
+            chapter: "",
+            completed: false
+        };
+    }
+
+    function saveData(nome, data){
+        const nomeLimpo = limparTitulo(nome);
+        localStorage.setItem(nomeLimpo, JSON.stringify(data));
+        updateStats();
+    }
+
+    function updateStats(){
+        let readed = 0;
+        let completed = 0;
+        manhwas.forEach(m => {
+            const tituloCorreto = m.titulo || m.nome;
+            if(!tituloCorreto) return;
+            const data = getData(tituloCorreto); 
+            if(data.readed) readed++;
+            if(data.completed) completed++;
+        });
+        document.getElementById("total").innerText = manhwas.length;
+        document.getElementById("readed").innerText = readed;
+        document.getElementById("completed").innerText = completed;
+    }
+
+    function render(lista){
+        grid.innerHTML = "";
+        lista.forEach(manhwa => {
+            const tituloCorreto = manhwa.titulo || manhwa.nome;
+            if(!tituloCorreto) return;
+            const data = getData(tituloCorreto); 
+            const nomeExibicao = limparTitulo(tituloCorreto);
+            const imagemCapa = manhwa.capa || manhwa.imagem || 'https://via.placeholder.com/400x220';
+            const linkUrl = manhwa.url || manhwa.link;
+            const card = document.createElement("div");
+            card.className = "card";
+            if(data.completed){ card.classList.add("completed"); }
+            card.innerHTML = `
+                <img class="cover" src="${imagemCapa}" alt="${nomeExibicao}" referrerpolicy="no-referrer">
+                <div class="title">
+                    <a href="${linkUrl}" target="_blank">${nomeExibicao}</a>
+                </div>
+                <div class="info">Último capítulo: ${manhwa.capitulo || '?'}</div>
+                <div class="controls">
+                    <label><input type="checkbox" class="readed"> Já li</label>
+                    <input type="number" class="chapter" placeholder="Capítulo atual">
+                    <label><input type="checkbox" class="completedCheck"> Finalizado</label>
+                </div>
+            `;
+            const readed = card.querySelector(".readed");
+            const chapter = card.querySelector(".chapter");
+            const completed = card.querySelector(".completedCheck");
+            readed.checked = data.readed;
+            chapter.value = data.chapter;
+            completed.checked = data.completed;
+            readed.addEventListener("change", () => { data.readed = readed.checked; saveData(tituloCorreto, data); });
+            chapter.addEventListener("input", () => { data.chapter = chapter.value; saveData(tituloCorreto, data); });
+            completed.addEventListener("change", () => {
+                data.completed = completed.checked;
+                if(data.completed){ card.classList.add("completed"); }else{ card.classList.remove("completed"); }
+                saveData(tituloCorreto, data);
+            });
+            grid.appendChild(card);
+        });
+        updateStats();
+    }
+
+    search.addEventListener("input", () => {
+        const value = search.value.toLowerCase();
+        const filtrados = manhwas.filter(m => {
+            const t = m.titulo || m.nome;
+            if(!t) return false;
+            return t.toLowerCase().includes(value) || limparTitulo(t).toLowerCase().includes(value);
+        });
+        render(filtrados);
+    });
+
+    render(manhwas);
+}
+loadManhwas();
